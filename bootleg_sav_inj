@@ -1,18 +1,45 @@
 #!/bin/bash
 
-save_filename="$1"
-rom_filename="$2"
+cmd_args=("$@")
+case $# in
+	0)
+		echo "please run the script with the rom (and the .sav) as arguments"
+		;;
+	1)
+        extension="${1##*.}"
+        if [[ "${extension^^}" == "GBC" ]]; then rom_filename="$1"; save_filename="${1%.*}.sav" ; fi
+        if [[ "${extension^^}" == "GB"  ]]; then rom_filename="$1"; save_filename="${1%.*}.sav" ; fi
+		;;
+	2)
+		for arg	in "${cmd_args[@]}"; do
+			extension="${arg##*.}"
+			if [[ "${extension^^}" == "SAV" ]]; then save_filename="$arg"; fi
+			if [[ "${extension^^}" == "GBC" ]]; then  rom_filename="$arg"; fi
+			if [[ "${extension^^}" == "GB"  ]]; then  rom_filename="$arg"; fi
+		done
+		;;
+	*)
+		echo "too many arguments"
+		echo "please run the script with the rom (and the .sav) as arguments"
+		;;
+esac
 
-if [ ! -f "$save_filename" ]; then
+if [ -e /proc/sys/fs/binfmt_misc/WSLInterop ]; then
+    echo "Windows for Linux Subsystem detected"
+    save_exists=true
+else
+  if [ ! -f "$save_filename" ]; then
     echo "$save_filename is not a regular file"
-    exit 1
-fi
+    save_exists=false
+  else
+    save_exists=true
+  fi
 
-if [ ! -f "$rom_filename" ]; then
+  if [ ! -f "$rom_filename" ]; then
     echo "$rom_filename is not a regular file"
     exit 1
+  fi
 fi
-
 
 function copy_sav_to_game {
     printf "\n\n\tCreating ROM backup...\n"
@@ -25,8 +52,10 @@ function copy_sav_to_game {
 }
 
 function copy_sav_from_game {
-    printf "\n\n\tCreating SAV backup...\n"
-    cp "$save_filename" "${save_filename%.*}.backup_$(date +%F_%Hh%Im%Ss).${save_filename##*.}" && printf "\tBackup successful. File: ${save_filename%.*}.backup_$(date +%F_%Hh%Im%Ss).${save_filename##*.}\n\n"
+    if [[ "$save_exists" == "true" ]] ; then
+        printf "\n\n\tCreating SAV backup...\n"
+        cp "$save_filename" "${save_filename%.*}.backup_$(date +%F_%Hh%Im%Ss).${save_filename##*.}" && printf "\tBackup successful. File: ${save_filename%.*}.backup_$(date +%F_%Hh%Im%Ss).${save_filename##*.}\n\n"
+    fi
     dd bs=1 skip=$(( ($bank_number + 0) * 0x4000 + 0x2000 ))          count=8k status=none conv=notrunc if="$rom_filename" of="$save_filename"
     dd bs=1 skip=$(( ($bank_number + 1) * 0x4000 + 0x2000 )) seek=8k  count=8k status=none conv=notrunc if="$rom_filename" of="$save_filename"
     dd bs=1 skip=$(( ($bank_number + 2) * 0x4000 + 0x2000 )) seek=16k count=8k status=none conv=notrunc if="$rom_filename" of="$save_filename"
@@ -39,7 +68,8 @@ function check_bank_for_sav {
     if [[ "$(dd bs=1 skip=$(( ($1 + 0) * 0x4000          )) count=8k status=none conv=notrunc if="$rom_filename" | sha1sum)" == "5e2b96c19c4f5c63a5afa2de504d29fe64a4c908  -" && \
           "$(dd bs=1 skip=$(( ($1 + 0) * 0x4000 + 0x2000 )) count=8k status=none conv=notrunc if="$rom_filename" | sha1sum)" != "5e2b96c19c4f5c63a5afa2de504d29fe64a4c908  -" && \
           "$(dd bs=1 skip=$(( ($1 + 1) * 0x4000          )) count=8k status=none conv=notrunc if="$rom_filename" | sha1sum)" == "5e2b96c19c4f5c63a5afa2de504d29fe64a4c908  -" && \
-          "$(dd bs=1 skip=$(( ($1 + 1) * 0x4000 + 0x2000 )) count=8k status=none conv=notrunc if="$rom_filename" | sha1sum)" != "5e2b96c19c4f5c63a5afa2de504d29fe64a4c908  -" ]]; then
+          "$(dd bs=1 skip=$(( ($1 + 1) * 0x4000 + 0x2000 )) count=8k status=none conv=notrunc if="$rom_filename" | sha1sum)" != "5e2b96c19c4f5c63a5afa2de504d29fe64a4c908  -" && \
+          "$(dd bs=1 skip=$(( ($1 + 2) * 0x4000          )) count=8k status=none conv=notrunc if="$rom_filename" | sha1sum)" == "5e2b96c19c4f5c63a5afa2de504d29fe64a4c908  -" ]]; then
           bank_number=$1
     fi
 }
@@ -50,30 +80,31 @@ until [ $i -le 8 ] ; do
     i=$(( $i - 4))
     check_bank_for_sav $i
 done
+
 if [[ "$bank_number" != "" ]]; then
     printf "\n\tbank autodetected: $(printf '0x%x' $bank_number)\n\n"
-    read -p "        Is it Crystal [c] or Yellow [y] or Green [g] or use autodetected bank [a]? --> " ver
+    read -p "        use autodetected bank [Enter] or enter Banknumber in 0x00 format: --> " ver
 else
-    read -p "        Is it Crystal [c] or Yellow [y] or Green [g]? --> " ver
+    read -p "        enter Banknumber in 0x00 format: --> " ver
 fi
 
-echo ""
-read -p "        Copy from game to sav [1] or from sav to game [2]? --> " copy
-
-
-if [ "$ver" = "c" ]; then
-    bank_number="0x84" # crystal bank number 0x84-0x87
-elif [ "$ver" = "y" ]; then
-    bank_number="0x40" # yellow bank number 0x40-0x43
-elif [ "$ver" = "g" ]; then
-    bank_number="0x34" # green bank number 0x34-0x37
-elif [ "$ver" = "a" ]; then
-    true
+if [ "$ver" = "" ]; then
+    if [[ $(( $bank_number )) -gt 0 && $(( $bank_number )) -le $banks_in_rom ]]; then true; else exit 1; fi
+elif [[ $(( $ver )) -gt 0 && $(( $ver )) -le $banks_in_rom ]]; then
+        bank_number="$var"
 else
-    echo "no game selected"
+    echo "no valid input"
     exit 1
 fi
 
+if [[ "$save_exists" == "true" ]] ; then
+    echo ""
+    read -p "        Copy from game to sav [1] or from sav to game [2]? --> " copy
+else
+    copy="1"
+    echo ""
+    echo "copying save from rom"
+fi
 
 if [ "$copy" = "1" ]; then
     copy_sav_from_game
@@ -83,3 +114,4 @@ else
     echo "no copy mode selected"
     exit 1
 fi
+
