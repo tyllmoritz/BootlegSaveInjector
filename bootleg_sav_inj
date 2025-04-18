@@ -1,5 +1,7 @@
 #!/bin/bash
 
+SKIP_FILENAME_CHECKS_ON_WSL=false
+
 cmd_args=("$@")
 case $# in
 	0)
@@ -24,7 +26,7 @@ case $# in
 		;;
 esac
 
-if [ -e /proc/sys/fs/binfmt_misc/WSLInterop ]; then
+if [[ "$SKIP_FILENAME_CHECKS_ON_WSL" == "true" && -e /proc/sys/fs/binfmt_misc/WSLInterop ]]; then
     echo "Windows for Linux Subsystem detected"
     save_exists=true
 else
